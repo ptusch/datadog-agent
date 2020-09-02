@@ -596,7 +596,7 @@ func bindataPkgEbpfCTracerebpfo() (*asset, error) {
 		name:        "pkg/ebpf/c/tracer-ebpf.o",
 		size:        41280,
 		md5checksum: "",
-		mode:        os.FileMode(420),
+		mode:        os.FileMode(436),
 		modTime:     time.Unix(1, 0),
 	}
 
@@ -1027,7 +1027,7 @@ func bindataPkgEbpfCTracerebpfdebugo() (*asset, error) {
 		name:        "pkg/ebpf/c/tracer-ebpf-debug.o",
 		size:        66704,
 		md5checksum: "",
-		mode:        os.FileMode(420),
+		mode:        os.FileMode(436),
 		modTime:     time.Unix(1, 0),
 	}
 
@@ -1114,7 +1114,7 @@ func bindataPkgEbpfCOffsetguesso() (*asset, error) {
 		name:        "pkg/ebpf/c/offset-guess.o",
 		size:        8328,
 		md5checksum: "",
-		mode:        os.FileMode(420),
+		mode:        os.FileMode(436),
 		modTime:     time.Unix(1, 0),
 	}
 
@@ -2853,7 +2853,7 @@ func bindataPkgSecurityEbpfCRuntimesecurityo() (*asset, error) {
 		name:        "pkg/security/ebpf/c/runtime-security.o",
 		size:        509632,
 		md5checksum: "",
-		mode:        os.FileMode(420),
+		mode:        os.FileMode(436),
 		modTime:     time.Unix(1, 0),
 	}
 
@@ -4511,7 +4511,7 @@ func bindataPkgSecurityEbpfCRuntimesecuritysyscallwrappero() (*asset, error) {
 		name:        "pkg/security/ebpf/c/runtime-security-syscall-wrapper.o",
 		size:        511384,
 		md5checksum: "",
-		mode:        os.FileMode(420),
+		mode:        os.FileMode(436),
 		modTime:     time.Unix(1, 0),
 	}
 
