@@ -9,10 +9,13 @@ package obfuscate
 
 import (
 	"bytes"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/DataDog/datadog-agent/pkg/trace/config"
 	"github.com/DataDog/datadog-agent/pkg/trace/pb"
+
+	"github.com/dgraph-io/ristretto"
 )
 
 // Obfuscator quantizes and obfuscates spans. The obfuscator is not safe for
@@ -26,6 +29,8 @@ type Obfuscator struct {
 	// to be generic.
 	// Not safe for concurrent use.
 	sqlLiteralEscapes int32
+	// queryCache keeps a cache of already obfuscated queries.
+	queryCache *ristretto.Cache
 }
 
 // SetSQLLiteralEscapes sets whether or not escape characters should be treated literally by the SQL obfuscator.
@@ -47,7 +52,27 @@ func NewObfuscator(cfg *config.ObfuscationConfig) *Obfuscator {
 	if cfg == nil {
 		cfg = new(config.ObfuscationConfig)
 	}
-	o := Obfuscator{opts: cfg}
+	cache, err := ristretto.NewCache(&ristretto.Config{
+		Metrics: true,
+		// We know that both cache keys and values will have a maximum
+		// length of 5K, so one entry (key + value) will be 10K maximum.
+		// At worst case scenario, a 5M cache should fit at least 500 queries.
+		MaxCost: 5 * 1024 * 1024,
+		// An appromixation worst-case scenario when the cache is filled of small
+		// queries averaged as being of length 19 (SELECT * FROM users), we would
+		// be able to fit 263K of them into 5MB of cost.
+		// We multiply the value by x10 as advised in the ristretto.Config documentation.
+		NumCounters: 3 * 1000 * 1000,
+		// 64 is the recommended default value
+		BufferItems: 64,
+	})
+	if err != nil {
+		panic(fmt.Errorf("Error starting obfuscator query cache: %v", err))
+	}
+	o := Obfuscator{
+		opts:       cfg,
+		queryCache: cache,
+	}
 	if cfg.ES.Enabled {
 		o.es = newJSONObfuscator(&cfg.ES)
 	}
