@@ -15,32 +15,15 @@ type queryCache struct {
 	*ristretto.Cache
 
 	close chan struct{}
-	off   bool
 }
 
 // Close gracefully closes the cache.
 func (c *queryCache) Close() {
-	if c.off {
+	if c.Cache == nil {
 		return
 	}
 	c.close <- struct{}{}
 	<-c.close
-}
-
-// Get wraps (*ristretto.Cache).Get with the ability for it to be a no-op.
-func (c *queryCache) Get(key interface{}) (interface{}, bool) {
-	if c.off {
-		return nil, false
-	}
-	return c.Cache.Get(key)
-}
-
-// Set wraps (*ristretto.Cache).Set with the ability for it to be a no-op.
-func (c *queryCache) Set(key, value interface{}, cost int64) bool {
-	if c.off {
-		return false
-	}
-	return c.Cache.Set(key, value, cost)
 }
 
 func (c *queryCache) statsLoop() {
@@ -63,6 +46,9 @@ func (c *queryCache) statsLoop() {
 
 // newQueryCache returns a new queryCache.
 func newQueryCache() *queryCache {
+	if !config.HasFeature("sql_cache") {
+		return &queryCache{}
+	}
 	cfg := &ristretto.Config{
 		Metrics: true,
 		// We know that both cache keys and values will have a maximum
@@ -77,19 +63,14 @@ func newQueryCache() *queryCache {
 		// 64 is the recommended default value
 		BufferItems: 64,
 	}
-	rcache, err := ristretto.NewCache(cfg)
+	cache, err := ristretto.NewCache(cfg)
 	if err != nil {
 		panic(fmt.Errorf("Error starting obfuscator query cache: %v", err))
 	}
 	c := queryCache{
-		Cache: rcache,
 		close: make(chan struct{}),
-		off:   !config.HasFeature("sql_cache"),
+		Cache: cache,
 	}
-	if c.off {
-		rcache.Close()
-	} else {
-		go c.statsLoop()
-	}
+	go c.statsLoop()
 	return &c
 }
