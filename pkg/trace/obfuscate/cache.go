@@ -4,29 +4,39 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DataDog/datadog-agent/pkg/trace/config"
+	"github.com/DataDog/datadog-agent/pkg/trace/metrics"
 	"github.com/dgraph-io/ristretto"
 )
 
-// cacheTippingPoint maps query length to minimum hit ratio needed by the
-// cache in order for it to be more performant than the "no cache at all" scenario.
-//
-// e.g. 200 => 0.3 means that for 1000 obfuscations of a 200 character query, at
-// least a 30% cache hit rate is needed for the algorithm to be efficient.
-//
-// The map is used to automatically disable the cache when it's becoming counterproductive
-// to performance.
-//
-// The values are obtained using BenchmarkQueryCacheTippingPoint.
-var cacheTippingPoint = map[int]float64{
-	30:   0.5,
-	200:  0.3,
-	925:  0.3,
-	1712: 0.2,
-	4200: 0.1,
+type queryCache struct {
+	*ristretto.Cache
+
+	close chan struct{}
+	off   bool
 }
 
-func newQueryCache() *ristretto.Cache {
-	cache, err := ristretto.NewCache(&ristretto.Config{
+func (c *queryCache) Close() {
+	c.close <- struct{}{}
+	<-c.close
+}
+
+func (c *queryCache) Get(key interface{}) (interface{}, bool) {
+	if c.off {
+		return nil, false
+	}
+	return c.Cache.Get(key)
+}
+
+func (c *queryCache) Set(key, value interface{}, cost int64) bool {
+	if c.off {
+		return false
+	}
+	return c.Cache.Set(key, value, cost)
+}
+
+func newQueryCache() *queryCache {
+	rcache, err := ristretto.NewCache(&ristretto.Config{
 		Metrics: true,
 		// We know that both cache keys and values will have a maximum
 		// length of 5K, so one entry (key + value) will be 10K maximum.
@@ -43,23 +53,27 @@ func newQueryCache() *ristretto.Cache {
 	if err != nil {
 		panic(fmt.Errorf("Error starting obfuscator query cache: %v", err))
 	}
-	var stopped bool
+	c := queryCache{
+		Cache: rcache,
+		close: make(chan struct{}),
+		off:   !config.HasFeature("sql_cache"),
+	}
 	go func() {
+		defer func() { c.close <- struct{}{} }()
+
 		tick := time.NewTicker(10 * time.Second)
-		mx := cache.Metrics
+		mx := rcache.Metrics
 		defer tick.Stop()
 		for {
 			select {
 			case <-tick.C:
-				if stopped {
-					return
-				}
-				if mx.Hits()+mx.Misses() < 1000 {
-					// not enough data
-					continue
-				}
+				metrics.Gauge("datadog.trace_agent.ofuscation.sql_cache.hits", float64(mx.Hits()), nil, 1)
+				metrics.Gauge("datadog.trace_agent.ofuscation.sql_cache.misses", float64(mx.Misses()), nil, 1)
+			case <-c.close:
+				c.Cache.Close()
+				return
 			}
 		}
 	}()
-	return cache
+	return &c
 }

@@ -13,8 +13,6 @@ import (
 
 	"github.com/DataDog/datadog-agent/pkg/trace/config"
 	"github.com/DataDog/datadog-agent/pkg/trace/pb"
-
-	"github.com/dgraph-io/ristretto"
 )
 
 // Obfuscator quantizes and obfuscates spans. The obfuscator is not safe for
@@ -29,7 +27,7 @@ type Obfuscator struct {
 	// Not safe for concurrent use.
 	sqlLiteralEscapes int32
 	// queryCache keeps a cache of already obfuscated queries.
-	queryCache *ristretto.Cache
+	queryCache *queryCache
 }
 
 // SetSQLLiteralEscapes sets whether or not escape characters should be treated literally by the SQL obfuscator.
@@ -63,6 +61,9 @@ func NewObfuscator(cfg *config.ObfuscationConfig) *Obfuscator {
 	}
 	return &o
 }
+
+// Stop cleans up after a finished Obfuscator.
+func (o *Obfuscator) Stop() { o.queryCache.Close() }
 
 // Obfuscate may obfuscate span's properties based on its type and on the Obfuscator's
 // configuration.
