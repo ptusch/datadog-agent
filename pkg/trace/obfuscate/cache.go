@@ -9,6 +9,8 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
+// queryCache is a wrapper on top of *ristretto.Cache which additionally
+// sends metrics (hits and misses) every 10 seconds.
 type queryCache struct {
 	*ristretto.Cache
 
@@ -16,11 +18,16 @@ type queryCache struct {
 	off   bool
 }
 
+// Close gracefully closes the cache.
 func (c *queryCache) Close() {
+	if c.off {
+		return
+	}
 	c.close <- struct{}{}
 	<-c.close
 }
 
+// Get wraps (*ristretto.Cache).Get with the ability for it to be a no-op.
 func (c *queryCache) Get(key interface{}) (interface{}, bool) {
 	if c.off {
 		return nil, false
@@ -28,6 +35,7 @@ func (c *queryCache) Get(key interface{}) (interface{}, bool) {
 	return c.Cache.Get(key)
 }
 
+// Set wraps (*ristretto.Cache).Set with the ability for it to be a no-op.
 func (c *queryCache) Set(key, value interface{}, cost int64) bool {
 	if c.off {
 		return false
@@ -35,8 +43,27 @@ func (c *queryCache) Set(key, value interface{}, cost int64) bool {
 	return c.Cache.Set(key, value, cost)
 }
 
+func (c *queryCache) statsLoop() {
+	defer func() { c.close <- struct{}{} }()
+
+	tick := time.NewTicker(10 * time.Second)
+	mx := c.Cache.Metrics
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			metrics.Gauge("datadog.trace_agent.ofuscation.sql_cache.hits", float64(mx.Hits()), nil, 1)
+			metrics.Gauge("datadog.trace_agent.ofuscation.sql_cache.misses", float64(mx.Misses()), nil, 1)
+		case <-c.close:
+			c.Cache.Close()
+			return
+		}
+	}
+}
+
+// newQueryCache returns a new queryCache.
 func newQueryCache() *queryCache {
-	rcache, err := ristretto.NewCache(&ristretto.Config{
+	cfg := &ristretto.Config{
 		Metrics: true,
 		// We know that both cache keys and values will have a maximum
 		// length of 5K, so one entry (key + value) will be 10K maximum.
@@ -49,7 +76,8 @@ func newQueryCache() *queryCache {
 		NumCounters: 3 * 1000 * 1000,
 		// 64 is the recommended default value
 		BufferItems: 64,
-	})
+	}
+	rcache, err := ristretto.NewCache(cfg)
 	if err != nil {
 		panic(fmt.Errorf("Error starting obfuscator query cache: %v", err))
 	}
@@ -58,22 +86,10 @@ func newQueryCache() *queryCache {
 		close: make(chan struct{}),
 		off:   !config.HasFeature("sql_cache"),
 	}
-	go func() {
-		defer func() { c.close <- struct{}{} }()
-
-		tick := time.NewTicker(10 * time.Second)
-		mx := rcache.Metrics
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				metrics.Gauge("datadog.trace_agent.ofuscation.sql_cache.hits", float64(mx.Hits()), nil, 1)
-				metrics.Gauge("datadog.trace_agent.ofuscation.sql_cache.misses", float64(mx.Misses()), nil, 1)
-			case <-c.close:
-				c.Cache.Close()
-				return
-			}
-		}
-	}()
+	if c.off {
+		rcache.Close()
+	} else {
+		go c.statsLoop()
+	}
 	return &c
 }
